@@ -1,0 +1,135 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            node_os: linux
+            node_arch: x64
+          - goos: linux
+            goarch: arm64
+            node_os: linux
+            node_arch: arm64
+          - goos: windows
+            goarch: amd64
+            node_os: win32
+            node_arch: x64
+          - goos: windows
+            goarch: arm64
+            node_os: win32
+            node_arch: arm64
+          - goos: darwin
+            goarch: amd64
+            node_os: darwin
+            node_arch: x64
+          - goos: darwin
+            goarch: arm64
+            node_os: darwin
+            node_arch: arm64
+      fail-fast: false
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'analyzer/go.mod'
+        cache: false
+
+    - name: Cache Go build and modules
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum', '**/go.mod') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-
+
+    - name: Build
+      shell: bash
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 0
+      run: |
+        mkdir -p bin
+        [[ "$GOOS" == "windows" ]] && EXT=".exe" || EXT=""
+
+        OUT_EXT="bin/gomu-${{ matrix.node_os }}-${{ matrix.node_arch }}${EXT}"
+
+        go build \
+          -C analyzer \
+          -trimpath \
+          -buildvcs=false \
+          -ldflags "-s -w -X 'main.Version=${{ github.ref_name }}'" \
+          -o "../$OUT_EXT" .
+
+    - name: Upload Extension Artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: ext_${{ matrix.goos }}_${{ matrix.goarch }}
+        path: bin/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+
+    - name: Install vsce
+      run: npm install -g @vscode/vsce
+
+    - name: Download Extension Artifacts (into ./bin)
+      uses: actions/download-artifact@v8
+      with:
+        pattern: ext_*
+        path: bin
+        merge-multiple: true
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Build Extension
+      run: npm run build
+
+    - name: Package VS Code Extension
+      run: |
+        chmod +x bin/* || true
+
+        rm -f ./extension.js
+        mv ./dist/extension.js ./extension.js
+        rm -rf ./dist
+
+        VERSION="${{ github.ref_name }}"
+        VERSION="${VERSION#v}"
+        npm version $VERSION --allow-same-version --no-git-tag-version || true
+
+        vsce package -o gomu-${{ github.ref_name }}.vsix
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: gomu-*.vsix
+        name: "Release ${{ github.ref_name }}"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
