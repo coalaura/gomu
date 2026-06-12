@@ -1,0 +1,68 @@
+{
+	"name": "gomu",
+	"displayName": "Gomu",
+	"description": "Visualize mutex lock scopes in Go with rainbow-style scope highlighting.",
+	"publisher": "coalaura",
+	"version": "0.1.0",
+	"engines": {
+		"vscode": "^1.80.0"
+	},
+	"categories": [
+		"Programming Languages",
+		"Linters"
+	],
+	"activationEvents": [
+		"onLanguage:go"
+	],
+	"scripts": {
+		"build": "esbuild ./extension.js --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify"
+	},
+	"main": "./extension.js",
+	"contributes": {
+		"languages": [
+			{
+				"id": "go",
+				"extensions": [
+					".go"
+				]
+			}
+		],
+		"configuration": {
+			"title": "Gomu",
+			"properties": {
+				"gomu.lineOpacity": {
+					"type": "number",
+					"default": 75,
+					"minimum": 0,
+					"maximum": 100,
+					"markdownDescription": "Opacity of the scope lines, from 0% (fully transparent) to 100% (fully opaque)."
+				},
+				"gomu.lineWidth": {
+					"type": "number",
+					"default": 2,
+					"minimum": 1,
+					"maximum": 20,
+					"markdownDescription": "Thickness of the scope lines in pixels."
+				},
+				"gomu.lineSpacing": {
+					"type": "number",
+					"default": 6,
+					"minimum": 1,
+					"maximum": 20,
+					"markdownDescription": "Horizontal clear space between nested scope lines in pixels (independent of line width)."
+				},
+				"gomu.baseOffset": {
+					"type": "number",
+					"default": 6,
+					"minimum": 1,
+					"maximum": 40,
+					"markdownDescription": "Horizontal distance in pixels between the code and the outermost scope line (the length of the bracket's foot)."
+				}
+			}
+		}
+	},
+	"devDependencies": {
+		"@types/vscode": "^1.80.0",
+		"esbuild": "^0.28.0"
+	}
+}
