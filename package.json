@@ -3,7 +3,16 @@
 	"displayName": "Gomu",
 	"description": "Visualize mutex lock scopes in Go with rainbow-style scope highlighting.",
 	"publisher": "coalaura",
+    "icon": "logo.png",
 	"version": "0.1.0",
+    "galleryBanner": {
+        "color": "#262537",
+        "theme": "dark"
+    },
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/coalaura/gomu.git"
+	},
 	"engines": {
 		"vscode": "^1.80.0"
 	},
@@ -32,7 +41,7 @@
 			"properties": {
 				"gomu.lineOpacity": {
 					"type": "number",
-					"default": 75,
+					"default": 80,
 					"minimum": 0,
 					"maximum": 100,
 					"markdownDescription": "Opacity of the scope lines, from 0% (fully transparent) to 100% (fully opaque)."

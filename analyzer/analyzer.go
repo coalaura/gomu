@@ -183,7 +183,6 @@ func analyzeFunctionBody(fset *token.FileSet, body *ast.BlockStmt, funcEnd token
 		if evt.isLock {
 			stack = append(stack, evt)
 		} else {
-			// Search from top of stack to handle nested locks on different variables
 			for i := len(stack) - 1; i >= 0; i-- {
 				if stack[i].varName == evt.varName && stack[i].lockType == evt.lockType {
 					startLine := stack[i].line
@@ -200,7 +199,6 @@ func analyzeFunctionBody(fset *token.FileSet, body *ast.BlockStmt, funcEnd token
 						LockType:  evt.lockType,
 					})
 
-					// Remove matched lock from stack
 					stack = append(stack[:i], stack[i+1:]...)
 
 					break
@@ -209,7 +207,45 @@ func analyzeFunctionBody(fset *token.FileSet, body *ast.BlockStmt, funcEnd token
 		}
 	}
 
-	return scopes
+	return mergeScopes(scopes)
+}
+
+func mergeScopes(scopes []LockScope) []LockScope {
+	if len(scopes) < 2 {
+		return scopes
+	}
+
+	slices.SortFunc(scopes, func(a, b LockScope) int {
+		if c := cmp.Compare(a.VarName, b.VarName); c != 0 {
+			return c
+		}
+
+		if c := cmp.Compare(a.LockType, b.LockType); c != 0 {
+			return c
+		}
+
+		return cmp.Compare(a.StartLine, b.StartLine)
+	})
+
+	merged := make([]LockScope, 0, len(scopes))
+	current := scopes[0]
+
+	for _, next := range scopes[1:] {
+		sameMutex := next.VarName == current.VarName && next.LockType == current.LockType
+
+		if sameMutex && next.StartLine <= current.EndLine {
+			if next.EndLine > current.EndLine {
+				current.EndLine = next.EndLine
+			}
+
+			continue
+		}
+
+		merged = append(merged, current)
+		current = next
+	}
+
+	return append(merged, current)
 }
 
 func extractLockEvent(fset *token.FileSet, call *ast.CallExpr, isDefer bool) (lockEvent, bool) {

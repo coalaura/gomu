@@ -19,6 +19,7 @@ const cachedScopes = new Map();
 let scopeStepPx = 6,
 	scopeBasePx = 6,
 	lineWidthPx = 2,
+	capStepPx = 4,
 	barTypes = [],
 	topCapTypes = [],
 	bottomCapTypes = [];
@@ -27,7 +28,7 @@ function getConfig() {
 	const config = vscode.workspace.getConfiguration("gomu");
 
 	return {
-		opacity: config.get("lineOpacity", 75) / 100,
+		opacity: config.get("lineOpacity", 80) / 100,
 		width: config.get("lineWidth", 2),
 		spacing: config.get("lineSpacing", 6),
 		baseOffset: config.get("baseOffset", 6),
@@ -65,6 +66,7 @@ function buildDecorationTypes() {
 	lineWidthPx = config.width;
 	scopeBasePx = config.baseOffset;
 	scopeStepPx = config.spacing + config.width;
+	capStepPx = config.width + 2;
 
 	disposeDecorationTypes();
 
@@ -321,9 +323,32 @@ function applyDecorations(editor, scopes) {
 			}
 
 			scope.colorIndex = activeScopes.length % barTypes.length;
-			scope.column = visualColumn(editor.document, Math.max(1, scope.startLine) - 1, tabSize);
+			scope.column = minVisualColumn(editor.document, scope.startLine, scope.endLine, tabSize);
 
 			activeScopes.push(scope);
+		}
+
+		const capGroups = new Map();
+
+		for (const scope of scopes) {
+			const key = `${scope.endLine}:${scope.column}`;
+
+			let group = capGroups.get(key);
+
+			if (!group) {
+				group = [];
+				capGroups.set(key, group);
+			}
+
+			group.push(scope);
+		}
+
+		for (const group of capGroups.values()) {
+			group.sort((a, b) => a.startLine - b.startLine);
+
+			for (let i = 0; i < group.length; i++) {
+				group[i].capShift = i;
+			}
 		}
 
 		for (const scope of scopes) {
@@ -338,9 +363,8 @@ function applyDecorations(editor, scopes) {
 	}
 }
 
-function visualColumn(doc, lineIndex, tabSize) {
-	const line = doc.lineAt(lineIndex),
-		charIndex = line.firstNonWhitespaceCharacterIndex,
+function columnOfLine(line, tabSize) {
+	const charIndex = line.firstNonWhitespaceCharacterIndex,
 		text = line.text;
 
 	let column = 0;
@@ -354,6 +378,32 @@ function visualColumn(doc, lineIndex, tabSize) {
 	}
 
 	return column;
+}
+
+// Bars span multiple indentation levels (defer, or lock/unlock on
+// different columns). Anchor to the shallowest code in the range so the
+// line never runs *through* code on the less-indented lines.
+function minVisualColumn(doc, startLine, endLine, tabSize) {
+	const lo = Math.max(1, startLine) - 1,
+		hi = Math.min(endLine, doc.lineCount) - 1;
+
+	let min = Infinity;
+
+	for (let i = lo; i <= hi; i++) {
+		const line = doc.lineAt(i);
+
+		if (line.isEmptyOrWhitespace) {
+			continue;
+		}
+
+		const column = columnOfLine(line, tabSize);
+
+		if (column < min) {
+			min = column;
+		}
+	}
+
+	return min === Infinity ? columnOfLine(doc.lineAt(lo), tabSize) : min;
 }
 
 function addScopeBar(editor, allScopes, barRanges, topCapRanges, bottomCapRanges, scope) {
@@ -389,25 +439,32 @@ function addScopeBar(editor, allScopes, barRanges, topCapRanges, bottomCapRanges
 	const offset = scopeBasePx + maxInner * scopeStepPx,
 		margin = `0 0 0 calc(${scope.column}ch - ${offset}px)`;
 
+	const shiftPx = (scope.capShift || 0) * capStepPx;
+
 	for (let line = startLine; line <= endLine; line++) {
+		const before = { margin: margin };
+
+		if (line === endLine && shiftPx > 0) {
+			before.height = `calc(100% - ${shiftPx}px)`;
+		}
+
 		barRanges.push({
 			range: new vscode.Range(line - 1, 0, line - 1, 0),
-			renderOptions: { before: { margin: margin } },
+			renderOptions: { before: before },
 		});
 	}
 
 	const capWidth = Math.max(0, offset - lineWidthPx),
-		capMargin = `0 0 0 calc(${scope.column}ch - ${offset}px + ${lineWidthPx}px)`,
-		capRender = { before: { margin: capMargin, width: `${capWidth}px` } };
+		capLeft = `calc(${scope.column}ch - ${offset}px + ${lineWidthPx - 1}px)`;
 
 	topCapRanges.push({
 		range: new vscode.Range(startLine - 1, 0, startLine - 1, 0),
-		renderOptions: capRender,
+		renderOptions: { before: { margin: `0 0 0 ${capLeft}`, width: `${capWidth}px` } },
 	});
 
 	bottomCapRanges.push({
 		range: new vscode.Range(endLine - 1, 0, endLine - 1, 0),
-		renderOptions: capRender,
+		renderOptions: { before: { margin: `0 0 ${shiftPx}px ${capLeft}`, width: `${capWidth}px` } },
 	});
 }
 
