@@ -20,9 +20,11 @@ let scopeStepPx = 6,
 	scopeBasePx = 6,
 	lineWidthPx = 2,
 	capStepPx = 4,
+	lineOpacity = 0.8,
 	barTypes = [],
 	topCapTypes = [],
-	bottomCapTypes = [];
+	bottomCapTypes = [],
+	bottomDeferCapTypes = [];
 
 function getConfig() {
 	const config = vscode.workspace.getConfiguration("gomu");
@@ -36,16 +38,19 @@ function getConfig() {
 }
 
 function disposeDecorationTypes() {
-	for (const type of [...barTypes, ...topCapTypes, ...bottomCapTypes]) {
+	for (const type of [...barTypes, ...topCapTypes, ...bottomCapTypes, ...bottomDeferCapTypes]) {
 		type.dispose();
 	}
 
 	barTypes = [];
 	topCapTypes = [];
 	bottomCapTypes = [];
+	bottomDeferCapTypes = [];
 }
 
 function createCapType(atBottom, config) {
+	const anchor = atBottom ? "bottom: 0" : `top: round(calc(50% - ${config.width / 2}px), 1px)`;
+
 	return colors.map(color =>
 		vscode.window.createTextEditorDecorationType({
 			before: {
@@ -53,7 +58,7 @@ function createCapType(atBottom, config) {
 				backgroundColor: color,
 				width: "0px",
 				height: `${config.width}px`,
-				textDecoration: `none; position: absolute; opacity: ${config.opacity}; ${atBottom ? "bottom: 0" : "top: 0"};`,
+				textDecoration: `none; position: absolute; opacity: ${config.opacity}; ${anchor};`,
 			},
 			rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
 		})
@@ -63,10 +68,11 @@ function createCapType(atBottom, config) {
 function buildDecorationTypes() {
 	const config = getConfig();
 
-	lineWidthPx = config.width;
-	scopeBasePx = config.baseOffset;
-	scopeStepPx = config.spacing + config.width;
-	capStepPx = config.width + 2;
+	lineWidthPx = Math.round(config.width);
+	scopeBasePx = Math.round(config.baseOffset);
+	scopeStepPx = Math.round(config.spacing + config.width);
+	capStepPx = Math.round(config.width + 2);
+	lineOpacity = config.opacity;
 
 	disposeDecorationTypes();
 
@@ -86,7 +92,8 @@ function buildDecorationTypes() {
 	);
 
 	topCapTypes = createCapType(false, config);
-	bottomCapTypes = createCapType(true, config);
+	bottomCapTypes = createCapType(false, config);
+	bottomDeferCapTypes = createCapType(true, config);
 }
 
 function refreshVisibleEditors() {
@@ -308,7 +315,8 @@ function requestAnalysis(document) {
 function applyDecorations(editor, scopes) {
 	const barRanges = barTypes.map(() => []),
 		topCapRanges = barTypes.map(() => []),
-		bottomCapRanges = barTypes.map(() => []);
+		bottomCapRanges = barTypes.map(() => []),
+		bottomDeferCapRanges = barTypes.map(() => []);
 
 	const tabSize = Number(editor.options.tabSize) || 4;
 
@@ -352,7 +360,7 @@ function applyDecorations(editor, scopes) {
 		}
 
 		for (const scope of scopes) {
-			addScopeBar(editor, scopes, barRanges[scope.colorIndex], topCapRanges[scope.colorIndex], bottomCapRanges[scope.colorIndex], scope);
+			addScopeBar(editor, scopes, barRanges[scope.colorIndex], topCapRanges[scope.colorIndex], bottomCapRanges[scope.colorIndex], bottomDeferCapRanges[scope.colorIndex], scope);
 		}
 	}
 
@@ -360,6 +368,7 @@ function applyDecorations(editor, scopes) {
 		editor.setDecorations(barTypes[i], barRanges[i]);
 		editor.setDecorations(topCapTypes[i], topCapRanges[i]);
 		editor.setDecorations(bottomCapTypes[i], bottomCapRanges[i]);
+		editor.setDecorations(bottomDeferCapTypes[i], bottomDeferCapRanges[i]);
 	}
 }
 
@@ -380,9 +389,10 @@ function columnOfLine(line, tabSize) {
 	return column;
 }
 
-// Bars span multiple indentation levels (defer, or lock/unlock on
-// different columns). Anchor to the shallowest code in the range so the
-// line never runs *through* code on the less-indented lines.
+function visualColumn(doc, lineIndex, tabSize) {
+	return columnOfLine(doc.lineAt(lineIndex), tabSize);
+}
+
 function minVisualColumn(doc, startLine, endLine, tabSize) {
 	const lo = Math.max(1, startLine) - 1,
 		hi = Math.min(endLine, doc.lineCount) - 1;
@@ -406,7 +416,7 @@ function minVisualColumn(doc, startLine, endLine, tabSize) {
 	return min === Infinity ? columnOfLine(doc.lineAt(lo), tabSize) : min;
 }
 
-function addScopeBar(editor, allScopes, barRanges, topCapRanges, bottomCapRanges, scope) {
+function addScopeBar(editor, allScopes, barRanges, topCapRanges, bottomCapRanges, bottomDeferCapRanges, scope) {
 	const doc = editor.document;
 
 	const startLine = Math.max(1, scope.startLine),
@@ -436,16 +446,33 @@ function addScopeBar(editor, allScopes, barRanges, topCapRanges, bottomCapRanges
 		}
 	}
 
+	const tabSize = Number(editor.options.tabSize) || 4,
+		startCol = visualColumn(doc, startLine - 1, tabSize),
+		endCol = visualColumn(doc, endLine - 1, tabSize);
+
 	const offset = scopeBasePx + maxInner * scopeStepPx,
 		margin = `0 0 0 calc(${scope.column}ch - ${offset}px)`;
 
-	const shiftPx = (scope.capShift || 0) * capStepPx;
+	const shiftPx = (scope.capShift || 0) * capStepPx,
+		barDecoration = extra => `none; position: absolute; opacity: ${lineOpacity}; ${extra}`;
 
 	for (let line = startLine; line <= endLine; line++) {
-		const before = { margin: margin };
+		const before = { margin: margin },
+			isStart = line === startLine,
+			isEnd = line === endLine;
 
-		if (line === endLine && shiftPx > 0) {
-			before.height = `calc(100% - ${shiftPx}px)`;
+		if (isStart && isEnd) {
+			before.textDecoration = barDecoration("top: round(50%, 1px);");
+			before.height = `${lineWidthPx}px`;
+		} else if (isStart) {
+			before.textDecoration = barDecoration("top: round(50%, 1px);");
+			before.height = "round(50%, 1px)";
+		} else if (isEnd) {
+			if (scope.isDefer) {
+				before.height = shiftPx > 0 ? `round(calc(100% - ${shiftPx}px), 1px)` : "round(100%, 1px)";
+			} else {
+				before.height = shiftPx > 0 ? `round(calc(50% - ${shiftPx}px), 1px)` : "round(50%, 1px)";
+			}
 		}
 
 		barRanges.push({
@@ -454,18 +481,28 @@ function addScopeBar(editor, allScopes, barRanges, topCapRanges, bottomCapRanges
 		});
 	}
 
-	const capWidth = Math.max(0, offset - lineWidthPx),
-		capLeft = `calc(${scope.column}ch - ${offset}px + ${lineWidthPx - 1}px)`;
+	const capLeft = `calc(${scope.column}ch - ${offset}px + ${lineWidthPx - 1}px)`,
+		topCapWidth = `calc(${startCol - scope.column}ch + ${Math.max(0, offset - lineWidthPx)}px)`,
+		bottomCapWidth = `calc(${endCol - scope.column}ch + ${Math.max(0, offset - lineWidthPx)}px)`;
 
 	topCapRanges.push({
 		range: new vscode.Range(startLine - 1, 0, startLine - 1, 0),
-		renderOptions: { before: { margin: `0 0 0 ${capLeft}`, width: `${capWidth}px` } },
+		renderOptions: { before: { margin: `0 0 0 ${capLeft}`, width: topCapWidth } },
 	});
 
-	bottomCapRanges.push({
-		range: new vscode.Range(endLine - 1, 0, endLine - 1, 0),
-		renderOptions: { before: { margin: `0 0 ${shiftPx}px ${capLeft}`, width: `${capWidth}px` } },
-	});
+	const bottomRange = new vscode.Range(endLine - 1, 0, endLine - 1, 0);
+
+	if (scope.isDefer) {
+		bottomDeferCapRanges.push({
+			range: bottomRange,
+			renderOptions: { before: { margin: `0 0 ${shiftPx}px ${capLeft}`, width: bottomCapWidth } },
+		});
+	} else {
+		bottomCapRanges.push({
+			range: bottomRange,
+			renderOptions: { before: { margin: `${-shiftPx}px 0 0 ${capLeft}`, width: bottomCapWidth } },
+		});
+	}
 }
 
 function deactivate() {

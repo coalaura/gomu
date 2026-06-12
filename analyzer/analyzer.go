@@ -30,6 +30,7 @@ type LockScope struct {
 	EndLine   int    `json:"endLine"`
 	VarName   string `json:"varName"`
 	LockType  string `json:"lockType"` // "Lock" or "RLock"
+	IsDefer   bool   `json:"isDefer"`
 }
 
 type lockEvent struct {
@@ -197,6 +198,7 @@ func analyzeFunctionBody(fset *token.FileSet, body *ast.BlockStmt, funcEnd token
 						EndLine:   endLine,
 						VarName:   evt.varName,
 						LockType:  evt.lockType,
+						IsDefer:   evt.isDefer,
 					})
 
 					stack = append(stack[:i], stack[i+1:]...)
@@ -237,6 +239,8 @@ func mergeScopes(scopes []LockScope) []LockScope {
 			if next.EndLine > current.EndLine {
 				current.EndLine = next.EndLine
 			}
+
+			current.IsDefer = current.IsDefer || next.IsDefer
 
 			continue
 		}
